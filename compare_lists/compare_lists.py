@@ -89,6 +89,8 @@ def read_csv_list(filepath: str) -> list[dict]:
                     return []
                 members: list[dict] = []
                 for row in reader:
+                    # Normalize keys so whitespace in header names doesn't break lookup
+                    row = {k.strip(): v for k, v in row.items() if k is not None}
                     nachname = row.get("Nachname", "").strip()
                     vorname = row.get("Vorname", "").strip()
                     if nachname or vorname:
@@ -109,6 +111,23 @@ def _key(member: dict) -> tuple[str, str]:
     return (member["Nachname"].casefold(), member["Vorname"].casefold())
 
 
+def _build_map(members: list[dict], source_name: str) -> dict[tuple[str, str], dict]:
+    """Build a (key → member) map and warn about duplicate entries."""
+    result: dict[tuple[str, str], dict] = {}
+    for m in members:
+        k = _key(m)
+        if k in result:
+            print(
+                f"Warning: Duplicate entry in {source_name} — "
+                f"'{m['Nachname']}, {m['Vorname']}' appears more than once. "
+                "Only the first occurrence is used.",
+                file=sys.stderr,
+            )
+        else:
+            result[k] = m
+    return result
+
+
 def compare_lists(
     list1: list[dict], list2: list[dict]
 ) -> tuple[list[dict], list[dict], list[dict]]:
@@ -119,8 +138,8 @@ def compare_lists(
         only_in_2: members only in list2
         in_both:   members present in both lists (data taken from list1)
     """
-    map1 = {_key(m): m for m in list1}
-    map2 = {_key(m): m for m in list2}
+    map1 = _build_map(list1, "Liste 1 (ODT)")
+    map2 = _build_map(list2, "Liste 2 (CSV)")
 
     keys1 = set(map1)
     keys2 = set(map2)
