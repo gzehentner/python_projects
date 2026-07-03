@@ -16,6 +16,16 @@ import argparse
 import csv
 import sys
 from pathlib import Path
+
+
+def _street_key(value: str) -> str:
+    """Normalize street values so Straße, Str, Str. and Strasse compare equal."""
+    normalized = value.strip().casefold()
+    normalized = normalized.replace("ß", "ss")
+    normalized = normalized.replace("strasse", "str")
+    normalized = normalized.replace("str.", "str")
+    return normalized
+
 def read_csv_list(filepath: str, street_column: str = "Straße") -> list[dict]:
     """Read a CSV file that contains 'Nachname', 'Vorname' and a street column.
 
@@ -76,7 +86,7 @@ def _key(member: dict) -> tuple[str, str, str]:
     return (
         member["Nachname"].casefold(),
         member["Vorname"].casefold(),
-        member["Straße"].casefold(),
+        _street_key(member["Straße"]),
     )
 
 
@@ -125,16 +135,22 @@ def compare_lists(
 
     name_to_streets_1: dict[tuple[str, str], set[str]] = {}
     name_to_streets_2: dict[tuple[str, str], set[str]] = {}
+    street_display_1: dict[tuple[str, str], dict[str, str]] = {}
+    street_display_2: dict[tuple[str, str], dict[str, str]] = {}
     canonical_names: dict[tuple[str, str], tuple[str, str]] = {}
 
     for m in list1:
         nk = _name_key(m)
         canonical_names.setdefault(nk, (m["Nachname"], m["Vorname"]))
-        name_to_streets_1.setdefault(nk, set()).add(m["Straße"])
+        street_key = _street_key(m["Straße"])
+        name_to_streets_1.setdefault(nk, set()).add(street_key)
+        street_display_1.setdefault(nk, {}).setdefault(street_key, m["Straße"])
     for m in list2:
         nk = _name_key(m)
         canonical_names.setdefault(nk, (m["Nachname"], m["Vorname"]))
-        name_to_streets_2.setdefault(nk, set()).add(m["Straße"])
+        street_key = _street_key(m["Straße"])
+        name_to_streets_2.setdefault(nk, set()).add(street_key)
+        street_display_2.setdefault(nk, {}).setdefault(street_key, m["Straße"])
 
     same_name_different_street: list[dict] = []
     for nk in sorted(set(name_to_streets_1) & set(name_to_streets_2)):
@@ -144,16 +160,16 @@ def compare_lists(
             continue
 
         nachname, vorname = canonical_names[nk]
-        for s1 in streets1:
-            for s2 in streets2:
-                if s1.casefold() == s2.casefold():
+        for s1_key in streets1:
+            for s2_key in streets2:
+                if s1_key.casefold() == s2_key.casefold():
                     continue
                 same_name_different_street.append(
                     {
                         "Nachname": nachname,
                         "Vorname": vorname,
-                        "Straße_Bank_Datei": s1,
-                        "Straße_Ame_Datei": s2,
+                        "Straße_Bank_Datei": street_display_1[nk][s1_key],
+                        "Straße_Ame_Datei": street_display_2[nk][s2_key],
                     }
                 )
 
