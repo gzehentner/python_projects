@@ -1,15 +1,16 @@
 # compare_lists
 
-Vergleicht zwei Mitgliederlisten im CSV-Format anhand von **Vorname**, **Nachname** und **Straße** und gibt vier Ergebnislisten aus.
+Vergleicht zwei Mitgliederlisten im CSV-Format anhand von **Vorname**, **Nachname** und **Straße** und gibt fuenf Ergebnislisten aus.
 
 ## Ergebnisse
 
 | Ausgabedatei | Inhalt |
-|---|---|
+| --- | --- |
 | `nur_in_Bank_Datei.csv` | Mitglieder nur in Liste 1 (CSV) |
 | `nur_in_Ame_Datei.csv` | Mitglieder nur in Liste 2 (CSV) |
 | `in_beiden_listen.csv` | Mitglieder in beiden Listen |
 | `gleicher_name_unterschiedliche_strasse.csv` | Gleicher Nachname/Vorname in beiden Listen, aber unterschiedliche Straße (zeigt Straße aus beiden Quellen) |
+| `aehnliche_eintraege_beide_listen.csv` | Unequal entries from list 1 and list 2 with max. 4 character differences (edit distance), both entries in one line |
 
 ## Voraussetzungen
 
@@ -42,7 +43,7 @@ python compare_lists.py LISTE1.csv LISTE2.csv
 
 ### Optionen
 
-```
+```text
 positional arguments:
   csv_file1             Source list 1: CSV file with Nachname, Vorname and Straße columns. The header row is read from the first line.
   csv_file2             Source list 2: CSV file with Nachname, Vorname and Postanschrift2 columns
@@ -59,3 +60,5 @@ python compare_lists.py bank.csv ame.csv --output-dir ergebnisse/
 ```
 
 Der Vergleich erfolgt **groß-/kleinschreibungsunabhängig** auf der Kombination (Nachname, Vorname, Straße).
+
+Zusätzlich wird eine Aehnlichkeitsliste erzeugt: Zwei Eintraege gelten als aehnlich, wenn ihre Zeichen-Differenz (Levenshtein/Edit-Distance) ueber den kombinierten Text aus Nachname, Vorname und Straße **nicht groesser als 4** ist.

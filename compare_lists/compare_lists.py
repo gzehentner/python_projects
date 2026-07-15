@@ -18,6 +18,36 @@ import sys
 from pathlib import Path
 
 
+def _levenshtein_distance_limited(a: str, b: str, max_distance: int) -> int:
+    """Return Levenshtein distance, aborting early when distance exceeds max_distance."""
+    if a == b:
+        return 0
+    if abs(len(a) - len(b)) > max_distance:
+        return max_distance + 1
+
+    # Keep the dynamic programming row short by iterating on the shorter string.
+    if len(a) > len(b):
+        a, b = b, a
+
+    previous = list(range(len(a) + 1))
+    for i, char_b in enumerate(b, start=1):
+        current = [i] + [0] * len(a)
+        row_min = current[0]
+        for j, char_a in enumerate(a, start=1):
+            cost = 0 if char_a == char_b else 1
+            current[j] = min(
+                previous[j] + 1,
+                current[j - 1] + 1,
+                previous[j - 1] + cost,
+            )
+            if current[j] < row_min:
+                row_min = current[j]
+        if row_min > max_distance:
+            return max_distance + 1
+        previous = current
+    return previous[-1]
+
+
 def _street_key(value: str) -> str:
     """Normalize street values so Straße, Str, Str. and Strasse compare equal."""
     normalized = value.strip().casefold()
@@ -110,6 +140,56 @@ def _build_map(members: list[dict], source_name: str) -> dict[tuple[str, str, st
         else:
             result[k] = m
     return result
+
+
+def _entry_text(member: dict) -> str:
+    """Create one normalized compare text for fuzzy matching across both lists."""
+    return " ".join(
+        [
+            member["Nachname"].strip(),
+            member["Vorname"].strip(),
+            member["Straße"].strip(),
+        ]
+    ).casefold()
+
+
+def _find_similar_entries(
+    list1: list[dict], list2: list[dict], max_distance: int = 4
+) -> list[dict]:
+    """Find unequal entries that are still similar (edit distance <= max_distance)."""
+    rows: list[dict] = []
+    for m1 in list1:
+        text1 = _entry_text(m1)
+        for m2 in list2:
+            text2 = _entry_text(m2)
+            if text1 == text2:
+                continue
+            distance = _levenshtein_distance_limited(text1, text2, max_distance)
+            if distance <= max_distance:
+                rows.append(
+                    {
+                        "Nachname_Liste1": m1["Nachname"],
+                        "Vorname_Liste1": m1["Vorname"],
+                        "Straße_Liste1": m1["Straße"],
+                        "Nachname_Liste2": m2["Nachname"],
+                        "Vorname_Liste2": m2["Vorname"],
+                        "Straße_Liste2": m2["Straße"],
+                        "Zeichen_Differenz": distance,
+                    }
+                )
+
+    rows.sort(
+        key=lambda r: (
+            int(r["Zeichen_Differenz"]),
+            r["Nachname_Liste1"].casefold(),
+            r["Vorname_Liste1"].casefold(),
+            r["Straße_Liste1"].casefold(),
+            r["Nachname_Liste2"].casefold(),
+            r["Vorname_Liste2"].casefold(),
+            r["Straße_Liste2"].casefold(),
+        )
+    )
+    return rows
 
 
 def compare_lists(
@@ -225,6 +305,43 @@ def _write_street_diff_csv(rows: list[dict], path: Path) -> None:
         writer.writerows(rows)
 
 
+def _print_similar_section(title: str, rows: list[dict]) -> None:
+    width = 60
+    print(f"\n{'=' * width}")
+    print(f"{title}  ({len(rows)} Einträge)")
+    print("=" * width)
+    if rows:
+        for r in rows:
+            print(
+                "  "
+                f"L1: {r['Nachname_Liste1']}, {r['Vorname_Liste1']}, {r['Straße_Liste1']}"
+                " | "
+                f"L2: {r['Nachname_Liste2']}, {r['Vorname_Liste2']}, {r['Straße_Liste2']}"
+                " | "
+                f"Diff: {r['Zeichen_Differenz']}"
+            )
+    else:
+        print("  (keine)")
+
+
+def _write_similar_csv(rows: list[dict], path: Path) -> None:
+    with open(path, "w", newline="", encoding="utf-8-sig") as fh:
+        writer = csv.DictWriter(
+            fh,
+            fieldnames=[
+                "Nachname_Liste1",
+                "Vorname_Liste1",
+                "Straße_Liste1",
+                "Nachname_Liste2",
+                "Vorname_Liste2",
+                "Straße_Liste2",
+                "Zeichen_Differenz",
+            ],
+        )
+        writer.writeheader()
+        writer.writerows(rows)
+
+
 # ---------------------------------------------------------------------------
 # Main
 # ---------------------------------------------------------------------------
@@ -233,7 +350,7 @@ def main() -> None:
     parser = argparse.ArgumentParser(
         description=(
             "Compare two member lists (CSV and CSV) by Nachname, Vorname and Straße. "
-            "Produces four result CSV files."
+            "Produces five result CSV files."
         )
     )
     parser.add_argument(
@@ -251,7 +368,7 @@ def main() -> None:
         "--output-dir",
         default=".",
         metavar="DIR",
-        help="Directory for the three output CSV files (default: current directory)",
+        help="Directory for the five output CSV files (default: current directory)",
     )
     args = parser.parse_args()
 
@@ -266,6 +383,7 @@ def main() -> None:
 
     # --- Compare ---
     only_in_1, only_in_2, in_both, same_name_different_street = compare_lists(list1, list2)
+    similar_entries = _find_similar_entries(list1, list2, max_distance=4)
 
     # --- Print to terminal ---
     _print_section("Nur in Liste 1 (CSV)", only_in_1)
@@ -274,6 +392,10 @@ def main() -> None:
     _print_street_diff_section(
         "Gleicher Name in beiden Listen, aber unterschiedliche Straße",
         same_name_different_street,
+    )
+    _print_similar_section(
+        "Aehnliche Eintraege zwischen Liste 1 und Liste 2 (Zeichen-Differenz <= 4)",
+        similar_entries,
     )
 
     # --- Write CSV output ---
@@ -286,6 +408,10 @@ def main() -> None:
     _write_street_diff_csv(
         same_name_different_street,
         out / "gleicher_name_unterschiedliche_strasse.csv",
+    )
+    _write_similar_csv(
+        similar_entries,
+        out / "aehnliche_eintraege_beide_listen.csv",
     )
 
     print(f"\nAusgabedateien wurden in '{out}/' gespeichert.")
