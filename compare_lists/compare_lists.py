@@ -15,6 +15,7 @@ Both lists are compared case-insensitively on (Nachname, Vorname, Straße).
 import argparse
 import csv
 import sys
+from collections import defaultdict
 from pathlib import Path
 
 
@@ -126,23 +127,6 @@ def _name_key(member: dict) -> tuple[str, str]:
     return (member["Nachname"].casefold(), member["Vorname"].casefold())
 
 
-def _build_map(members: list[dict], source_name: str) -> dict[tuple[str, str, str], dict]:
-    """Build a (key → member) map and warn about duplicate entries."""
-    result: dict[tuple[str, str, str], dict] = {}
-    for m in members:
-        k = _key(m)
-        if k in result:
-            print(
-                f"Warning: Duplicate entry in {source_name} — "
-                f"'{m['Nachname']}, {m['Vorname']}, {m['Straße']}' appears more than once. "
-                "Only the first occurrence is used.",
-                file=sys.stderr,
-            )
-        else:
-            result[k] = m
-    return result
-
-
 def _entry_text(member: dict) -> str:
     """Create one normalized compare text for fuzzy matching across both lists."""
     return " ".join(
@@ -205,15 +189,29 @@ def compare_lists(
         in_both:   members present in both lists (data taken from list1)
         same_name_different_street: rows with same name in both lists but differing street
     """
-    map1 = _build_map(list1, "Liste 1 (CSV)")
-    map2 = _build_map(list2, "Liste 2 (CSV)")
+    members_by_key_1: dict[tuple[str, str, str], list[dict]] = defaultdict(list)
+    members_by_key_2: dict[tuple[str, str, str], list[dict]] = defaultdict(list)
 
-    keys1 = set(map1)
-    keys2 = set(map2)
+    for m in list1:
+        members_by_key_1[_key(m)].append(m)
+    for m in list2:
+        members_by_key_2[_key(m)].append(m)
 
-    only_in_1 = [map1[k] for k in sorted(keys1 - keys2)]
-    only_in_2 = [map2[k] for k in sorted(keys2 - keys1)]
-    in_both = [map1[k] for k in sorted(keys1 & keys2)]
+    keys1 = set(members_by_key_1)
+    keys2 = set(members_by_key_2)
+
+    only_in_1: list[dict] = []
+    only_in_2: list[dict] = []
+    in_both: list[dict] = []
+
+    for k in sorted(keys1 | keys2):
+        rows1 = members_by_key_1.get(k, [])
+        rows2 = members_by_key_2.get(k, [])
+        common_count = min(len(rows1), len(rows2))
+
+        in_both.extend(rows1[:common_count])
+        only_in_1.extend(rows1[common_count:])
+        only_in_2.extend(rows2[common_count:])
 
     name_to_streets_1: dict[tuple[str, str], set[str]] = {}
     name_to_streets_2: dict[tuple[str, str], set[str]] = {}
