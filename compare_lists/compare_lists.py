@@ -98,8 +98,9 @@ def read_csv_list(filepath: str, street_column: str = "Straße") -> list[dict]:
                     nachname = row.get("Nachname", "").strip()
                     vorname = row.get("Vorname", "").strip()
                     strasse = row.get(street_column, "").strip()
+                    pnr = row.get("PNr", "").strip()
                     if nachname or vorname or strasse:
-                        members.append({"Nachname": nachname, "Vorname": vorname, "Straße": strasse})
+                        members.append({"Nachname": nachname, "Vorname": vorname, "Straße": strasse, "PNr": pnr})
                 return members
         except UnicodeDecodeError:
             continue
@@ -168,6 +169,7 @@ def _find_similar_entries(
             if distance <= max_distance:
                 rows.append(
                     {
+                        "PNr_Liste1": m1.get("PNr", ""),
                         "Nachname_Liste1": m1["Nachname"],
                         "Vorname_Liste1": m1["Vorname"],
                         "Straße_Liste1": m1["Straße"],
@@ -216,6 +218,7 @@ def compare_lists(
     name_to_streets_1: dict[tuple[str, str], set[str]] = {}
     name_to_streets_2: dict[tuple[str, str], set[str]] = {}
     street_display_1: dict[tuple[str, str], dict[str, str]] = {}
+    pnr_display_1: dict[tuple[str, str], dict[str, str]] = {}
     street_display_2: dict[tuple[str, str], dict[str, str]] = {}
     canonical_names: dict[tuple[str, str], tuple[str, str]] = {}
 
@@ -225,6 +228,7 @@ def compare_lists(
         street_key = _street_key(m["Straße"])
         name_to_streets_1.setdefault(nk, set()).add(street_key)
         street_display_1.setdefault(nk, {}).setdefault(street_key, m["Straße"])
+        pnr_display_1.setdefault(nk, {}).setdefault(street_key, m.get("PNr", ""))
     for m in list2:
         nk = _name_key(m)
         canonical_names.setdefault(nk, (m["Nachname"], m["Vorname"]))
@@ -246,6 +250,7 @@ def compare_lists(
                     continue
                 same_name_different_street.append(
                     {
+                        "PNr": pnr_display_1[nk].get(s1_key, ""),
                         "Nachname": nachname,
                         "Vorname": vorname,
                         "Straße_Bank_Datei": street_display_1[nk][s1_key],
@@ -275,7 +280,7 @@ def _print_section(title: str, members: list[dict]) -> None:
 def _write_csv(members: list[dict], path: Path) -> None:
     # UTF-8 with BOM improves compatibility with Excel on Windows.
     with open(path, "w", newline="", encoding="utf-8-sig") as fh:
-        writer = csv.DictWriter(fh, fieldnames=["Nachname", "Vorname", "Straße"])
+        writer = csv.DictWriter(fh, fieldnames=["PNr", "Nachname", "Vorname", "Straße"])
         writer.writeheader()
         writer.writerows(members)
 
@@ -288,7 +293,7 @@ def _print_street_diff_section(title: str, rows: list[dict]) -> None:
     if rows:
         for r in rows:
             print(
-                f"  {r['Nachname']}, {r['Vorname']} | "
+                f"  PNr: {r.get('PNr', '')} | {r['Nachname']}, {r['Vorname']} | "
                 f"Bank: {r['Straße_Bank_Datei']} | Ame: {r['Straße_Ame_Datei']}"
             )
     else:
@@ -299,7 +304,7 @@ def _write_street_diff_csv(rows: list[dict], path: Path) -> None:
     with open(path, "w", newline="", encoding="utf-8-sig") as fh:
         writer = csv.DictWriter(
             fh,
-            fieldnames=["Nachname", "Vorname", "Straße_Bank_Datei", "Straße_Ame_Datei"],
+            fieldnames=["PNr", "Nachname", "Vorname", "Straße_Bank_Datei", "Straße_Ame_Datei"],
         )
         writer.writeheader()
         writer.writerows(rows)
@@ -329,6 +334,7 @@ def _write_similar_csv(rows: list[dict], path: Path) -> None:
         writer = csv.DictWriter(
             fh,
             fieldnames=[
+                "PNr_Liste1",
                 "Nachname_Liste1",
                 "Vorname_Liste1",
                 "Straße_Liste1",
