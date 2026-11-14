@@ -80,7 +80,12 @@ def _comparison_last_name(member: dict) -> str:
         last_name = last_name[: match.start()].rstrip()
     return last_name.casefold()
 
-def read_csv_list(filepath: str, street_column: str = "Straße") -> list[dict]:
+def read_csv_list(
+    filepath: str,
+    street_column: str = "Straße",
+    skipped_lines: list[str] | None = None,
+    require_numeric_first_column: bool = True,
+) -> list[dict]:
     """Read a CSV file that contains 'Nachname', 'Vorname' and a street column.
 
     Encoding is tried as UTF-8-with-BOM first, then Latin-1 as a fallback
@@ -92,37 +97,80 @@ def read_csv_list(filepath: str, street_column: str = "Straße") -> list[dict]:
             with open(filepath, newline="", encoding=encoding) as fh:
                 sample = fh.read(4096)
                 fh.seek(0)
-                try:
-                    dialect = csv.Sniffer().sniff(sample, delimiters=",;\t|")
-                except csv.Error:
-                    dialect = csv.excel
+                if sample.count(";") > sample.count(","):
+                    dialect = csv.excel()
+                    dialect.delimiter = ";"
+                else:
+                    try:
+                        dialect = csv.Sniffer().sniff(sample, delimiters=",;\t|")
+                    except csv.Error:
+                        dialect = csv.excel
 
-                reader = csv.DictReader(fh, dialect=dialect)
-                if reader.fieldnames is None:
-                    continue
-                # Check required columns exist (case-sensitive)
-                fields = [f.strip() for f in reader.fieldnames]
-                if len(fields) == 1 and ";" in fields[0]:
-                    fh.seek(0)
-                    reader = csv.DictReader(fh, delimiter=";")
-                    if reader.fieldnames is None:
-                        continue
-                    fields = [f.strip() for f in reader.fieldnames]
-                if "Nachname" not in fields or "Vorname" not in fields or street_column not in fields:
+                rows = list(csv.reader(fh, dialect=dialect))
+                street_aliases = {street_column}
+                if street_column.casefold().startswith("stra"):
+                    street_aliases.update({"Straße", "Straße, Nr."})
+
+                header_index = None
+                fields: list[str] = []
+                for index, candidate in enumerate(rows):
+                    candidate_fields = [field.strip() for field in candidate]
+                    if (
+                        "Nachname" in candidate_fields
+                        and "Vorname" in candidate_fields
+                        and street_aliases.intersection(candidate_fields)
+                    ):
+                        header_index = index
+                        fields = candidate_fields
+                        break
+
+                if header_index is None:
                     print(
                         f"Warning: CSV file '{filepath}' does not contain 'Nachname', "
-                        f"'Vorname' and/or '{street_column}' columns. Found: {fields}",
+                        f"'Vorname' and/or '{street_column}' columns.",
                         file=sys.stderr,
                     )
                     return []
+
+                if skipped_lines is not None:
+                    for line_number, row in enumerate(rows[:header_index], start=1):
+                        skipped_lines.append(
+                            f"{filepath} (Zeile {line_number}): "
+                            + dialect.delimiter.join(row)
+                        )
+
+                field_positions = {
+                    field: position for position, field in enumerate(fields) if field
+                }
+                street_field = next(field for field in fields if field in street_aliases)
+                pnr_position = next(
+                    (
+                        field_positions[name]
+                        for name in ("PNr", "Personalnummer", "Mitgl-Nr")
+                        if name in field_positions
+                    ),
+                    0,
+                )
                 members: list[dict] = []
-                for row in reader:
-                    # Normalize keys so whitespace in header names doesn't break lookup
-                    row = {k.strip(): (v or "") for k, v in row.items() if k is not None}
-                    nachname = row.get("Nachname", "").strip()
-                    vorname = row.get("Vorname", "").strip()
-                    strasse = row.get(street_column, "").strip()
-                    pnr = row.get("PNr", "").strip()
+                for line_number, values in enumerate(
+                    rows[header_index + 1 :], start=header_index + 2
+                ):
+                    first_column = values[0].strip() if values else ""
+                    if require_numeric_first_column and not first_column.isdecimal():
+                        if skipped_lines is not None:
+                            skipped_lines.append(
+                                f"{filepath} (Zeile {line_number}): "
+                                + dialect.delimiter.join(values)
+                            )
+                        continue
+
+                    def value_at(position: int) -> str:
+                        return values[position].strip() if position < len(values) else ""
+
+                    nachname = value_at(field_positions["Nachname"])
+                    vorname = value_at(field_positions["Vorname"])
+                    strasse = value_at(field_positions[street_field])
+                    pnr = value_at(pnr_position)
                     if nachname or vorname or strasse:
                         members.append({"Nachname": nachname, "Vorname": vorname, "Straße": strasse, "PNr": pnr})
                 return members
@@ -369,6 +417,13 @@ def _write_similar_csv(rows: list[dict], path: Path) -> None:
         writer.writerows(rows)
 
 
+def _write_header_log(skipped_lines: list[str], path: Path) -> None:
+    """Overwrite the log with all non-data rows skipped during this run."""
+    with open(path, "w", encoding="utf-8-sig", newline="") as fh:
+        for line in skipped_lines:
+            fh.write(f"{line}\n")
+
+
 # ---------------------------------------------------------------------------
 # Main
 # ---------------------------------------------------------------------------
@@ -384,7 +439,7 @@ def main() -> None:
         "csv_file1",
         help=(
             "Source list 1: CSV file with Nachname, Vorname and Straße columns. "
-            "The header row is read from the first line."
+            "Preamble and repeated headers are ignored automatically."
         ),
     )
     parser.add_argument(
@@ -399,13 +454,26 @@ def main() -> None:
     )
     args = parser.parse_args()
 
+    out = Path(args.output_dir)
+    out.mkdir(parents=True, exist_ok=True)
+    skipped_lines: list[str] = []
+
     # --- Read ---
     print(f"Lese CSV-Datei 1: {args.csv_file1}")
-    list1 = read_csv_list(args.csv_file1, street_column="Straße")
+    list1 = read_csv_list(
+        args.csv_file1,
+        street_column="Straße",
+        skipped_lines=skipped_lines,
+    )
     print(f"  {len(list1)} Einträge gefunden")
 
     print(f"Lese CSV-Datei 2: {args.csv_file2}")
-    list2 = read_csv_list(args.csv_file2, street_column="Postanschrift2")
+    list2 = read_csv_list(
+        args.csv_file2,
+        street_column="Postanschrift2",
+        skipped_lines=skipped_lines,
+        require_numeric_first_column=False,
+    )
     print(f"  {len(list2)} Einträge gefunden")
 
     # --- Compare ---
@@ -429,9 +497,6 @@ def main() -> None:
     )
 
     # --- Write CSV output ---
-    out = Path(args.output_dir)
-    out.mkdir(parents=True, exist_ok=True)
-
     _write_csv(only_in_1, out / "nur_in_Bank_Datei.csv")
     _write_csv(only_in_2, out / "nur_in_Ame_Datei.csv")
     _write_csv(in_both, out / "in_beiden_listen.csv")
@@ -443,8 +508,9 @@ def main() -> None:
         similar_entries,
         out / "aehnliche_eintraege_beide_listen.csv",
     )
+    _write_header_log(skipped_lines, out / "header.log")
 
-    print(f"\nAusgabedateien wurden in '{out}/' gespeichert.")
+    print(f"\nAusgabedateien und header.log wurden in '{out}/' gespeichert.")
 
 
 if __name__ == "__main__":

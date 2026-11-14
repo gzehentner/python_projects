@@ -11,10 +11,11 @@ Vergleicht zwei Mitgliederlisten im CSV-Format anhand von **Vorname**, **Nachnam
 | `in_beiden_listen.csv` | Mitglieder in beiden Listen |
 | `gleicher_name_unterschiedliche_strasse.csv` | Gleicher Nachname/Vorname in beiden Listen, aber unterschiedliche Straße (zeigt Straße aus beiden Quellen) |
 | `aehnliche_eintraege_beide_listen.csv` | Unequal entries from list 1 and list 2 with max. 4 character differences (edit distance), both entries in one line |
+| `header.log` | Beim Einlesen übersprungene Seiten-Header und andere ungültige Zeilen |
 
 ## Voraussetzungen
 
-```bash
+```
 pip install -r requirements.txt
 ```
 
@@ -30,6 +31,16 @@ Die CSV-Datei muss eine Kopfzeile mit den Spalten **`Nachname`**, **`Vorname`** 
 
 Die Spalte **`Postanschrift2`** wird intern als **`Straße`** verwendet.
 
+In Liste 1 muss die erste Spalte jeder gültigen Datenzeile eine rein numerische
+Mitgliedsnummer enthalten. Vorspannzeilen vor der eigentlichen Kopfzeile sowie
+spätere Zeilen mit einem anderen Inhalt in der ersten Spalte werden automatisch
+ignoriert. Dadurch werden auch wiederholte Seiten-Header aus exportierten
+Dateien herausgefiltert. Die Spaltennamen `Mitgl-Nr` und `Straße, Nr.` werden
+automatisch als `PNr` und `Straße` erkannt. Die ignorierten Zeilen werden mit
+Quelldatei und Zeilennummer in `header.log` im Ausgabeordner protokolliert; die
+Logdatei wird bei jedem Programmstart neu geschrieben. Liste 2 wird nicht nach
+einer numerischen ersten Spalte gefiltert, da dort die PK-Kennung stehen kann.
+
 Unterstützte Encodings: UTF-8 (mit oder ohne BOM), CP1252, Latin-1.
 Das Trennzeichen wird automatisch erkannt (z. B. `,` oder `;`).
 
@@ -37,7 +48,7 @@ Die Ausgabedateien werden als **UTF-8 mit BOM** gespeichert, damit Umlaute in Ex
 
 ## Verwendung
 
-```bash
+```
 python compare_lists.py LISTE1.csv LISTE2.csv
 ```
 
@@ -45,11 +56,12 @@ python compare_lists.py LISTE1.csv LISTE2.csv
 
 ```text
 positional arguments:
-  csv_file1             Source list 1: CSV file with Nachname, Vorname and Straße columns. The header row is read from the first line.
+  csv_file1             Source list 1: CSV file with Nachname, Vorname and Straße columns. Preamble and repeated headers are ignored automatically.
   csv_file2             Source list 2: CSV file with Nachname, Vorname and Postanschrift2 columns
 
 options:
-  --output-dir DIR      Directory for the four output CSV files (default: current directory)
+  --output-dir DIR      Directory for the four output CSV files (default: current directory). This parameter has to be set as the first parameter, bevor the list-file-names are set
+
   -h, --help            show this help message and exit
 ```
 
