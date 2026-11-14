@@ -14,6 +14,7 @@ Both lists are compared case-insensitively on (Nachname, Vorname, Straße).
 
 import argparse
 import csv
+import re
 import sys
 from collections import defaultdict
 from pathlib import Path
@@ -56,6 +57,28 @@ def _street_key(value: str) -> str:
     normalized = normalized.replace("strasse", "str")
     normalized = normalized.replace("str.", "str")
     return normalized
+
+
+def _street_key_without_house_number(value: str) -> str:
+    """Return the normalized street name without a trailing house number."""
+    street_without_number = re.sub(
+        r"\s+\d+[\w/-]*(?:\s*-\s*\d+[\w/-]*)?\s*$",
+        "",
+        value.strip(),
+        flags=re.IGNORECASE,
+    )
+    return _street_key(street_without_number)
+
+
+def _comparison_last_name(member: dict) -> str:
+    """Ignore a matching parenthesized street word at the end of a last name."""
+    last_name = member["Nachname"].strip()
+    match = re.search(r"\s*\(([^()\s]+)\)\s*$", last_name)
+    if match and _street_key(match.group(1)) == _street_key_without_house_number(
+        member["Straße"]
+    ):
+        last_name = last_name[: match.start()].rstrip()
+    return last_name.casefold()
 
 def read_csv_list(filepath: str, street_column: str = "Straße") -> list[dict]:
     """Read a CSV file that contains 'Nachname', 'Vorname' and a street column.
@@ -116,7 +139,7 @@ def read_csv_list(filepath: str, street_column: str = "Straße") -> list[dict]:
 def _key(member: dict) -> tuple[str, str, str]:
     """Case-insensitive (Nachname, Vorname, Straße) tuple used as comparison key."""
     return (
-        member["Nachname"].casefold(),
+        _comparison_last_name(member),
         member["Vorname"].casefold(),
         _street_key(member["Straße"]),
     )
@@ -124,14 +147,14 @@ def _key(member: dict) -> tuple[str, str, str]:
 
 def _name_key(member: dict) -> tuple[str, str]:
     """Case-insensitive (Nachname, Vorname) tuple used for name-level grouping."""
-    return (member["Nachname"].casefold(), member["Vorname"].casefold())
+    return (_comparison_last_name(member), member["Vorname"].casefold())
 
 
 def _entry_text(member: dict) -> str:
     """Create one normalized compare text for fuzzy matching across both lists."""
     return " ".join(
         [
-            member["Nachname"].strip(),
+            _comparison_last_name(member),
             member["Vorname"].strip(),
             member["Straße"].strip(),
         ]
@@ -387,7 +410,10 @@ def main() -> None:
 
     # --- Compare ---
     only_in_1, only_in_2, in_both, same_name_different_street = compare_lists(list1, list2)
-    similar_entries = _find_similar_entries(list1, list2, max_distance=4)
+    # Search only among entries that were not already verified as exact matches.
+    # Otherwise an entry from "in beiden Listen" could appear a second time in
+    # the similarity output because it happens to resemble another entry.
+    similar_entries = _find_similar_entries(only_in_1, only_in_2, max_distance=4)
 
     # --- Print to terminal ---
     _print_section("Nur in Liste 1 (CSV)", only_in_1)
